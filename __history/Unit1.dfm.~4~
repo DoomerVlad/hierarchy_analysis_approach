@@ -1,0 +1,65 @@
+object Form1: TForm1
+  Left = 0
+  Top = 0
+  BorderIcons = [biSystemMenu, biMinimize]
+  Caption = #1052#1077#1090#1086#1076' '#1072#1085#1072#1083#1080#1079#1072' '#1080#1077#1088#1072#1088#1093#1080#1081
+  ClientHeight = 299
+  ClientWidth = 373
+  Color = clBtnFace
+  Font.Charset = DEFAULT_CHARSET
+  Font.Color = clWindowText
+  Font.Height = -11
+  Font.Name = 'Tahoma'
+  Font.Style = []
+  OldCreateOrder = False
+  PixelsPerInch = 96
+  TextHeight = 13
+  object Label1: TLabel
+    Left = 8
+    Top = 8
+    Width = 353
+    Height = 105
+    AutoSize = False
+    WordWrap = True
+  end
+  object Button1: TButton
+    Left = 8
+    Top = 266
+    Width = 75
+    Height = 25
+    Caption = #1042#1074#1086#1076
+    TabOrder = 0
+    OnClick = Button1Click
+  end
+  object Button2: TButton
+    Left = 136
+    Top = 266
+    Width = 75
+    Height = 25
+    Caption = #1054#1095#1080#1089#1090#1080#1090#1100
+    TabOrder = 1
+    OnClick = Button2Click
+  end
+  object Button3: TButton
+    Left = 272
+    Top = 266
+    Width = 75
+    Height = 25
+    Caption = 'Help'
+    TabOrder = 2
+    OnClick = Button3Click
+  end
+  object StringGrid1: TStringGrid
+    Left = 8
+    Top = 119
+    Width = 357
+    Height = 66
+    ColCount = 4
+    DefaultColWidth = 87
+    DefaultRowHeight = 30
+    FixedCols = 2
+    RowCount = 4
+    ScrollBars = ssNone
+    TabOrder = 3
+  end
+end

@@ -1,0 +1,554 @@
+/*	Программа предоставляет способ решения многокритериальной задачи
+с помощью метода анализа иерархий (МАИ) на примере задачи выбора ЦПУ.
+ПО предлагает пользователю ввести важность критериев относительно
+друг друга, затем ввести данные процессора. В итоге расчётов пользователь
+получит итоговое значение критерия для каждой альтернативы.
+
+Автор Балашов В.О.
+Дата последней правки 04.08.2022
+Версия 1.2
+*/
+
+//---------------------------------------------------------------------------
+
+#include <vcl.h>
+#pragma hdrstop
+
+#include "Unit1.h"
+#include <windows.h>
+#include <stdio.h>
+//---------------------------------------------------------------------------
+#pragma package(smart_init)
+#pragma resource "*.dfm"
+TWindow *Window;
+
+bool help = false;                      // Флаг окна помощи
+int prev_window = 0;                    // Запоминание номера окна
+int count_windows = 0;                  // Номер окна
+double cells_сrit[3][3] = {0};  	    // Таблица сравнения критериев
+double relative_weight_crit[3] = {0};   // Относительный вес критериев
+double cells_CPU[3][3] = {0};   	    // Данные процессоров
+double relative_weight_CPU[3] = {0};    // Относительный веса альтернатив
+										// по каждому критериев
+double relative_weight_CPU_crit[3][3];  // Итоговая таблица относительного веса
+										// альтернатив по каждому критерию
+double result_crit[3] = {0};            // Итоговое значение критерия
+										// для каждой альтернативы
+bool unblock_cells = 0;                 // Блокировка ячеек с дефисами
+bool global_error = false;              // true - нахождение ошибки
+AnsiString error_text;                  // Текст ошибки
+
+bool first_digit = false;
+bool first_comma = false;
+bool cells_first_comma[3][3] = {0};
+AnsiString prev_char = "";
+int prev_cell_number = 0;
+
+
+//                        Исходное окно
+//---------------------------------------------------------------------------
+__fastcall TWindow::TWindow(TComponent* Owner)
+	: TForm(Owner)
+{
+	// Оформление первого окна
+	clear_cells();
+	window_setting();
+	Table->Options<<goEditing;
+}
+//                        Кнопка "Ввод"
+//---------------------------------------------------------------------------
+void __fastcall TWindow::InputClick(TObject *Sender)
+{
+	// Расчёт относительного веса критериев
+	if(count_windows == 0)
+	{
+		// Проверка пользовательского ввода
+		if(check_table())
+			return;
+
+		// Разблокировка ячеек таблицы
+		unblock_cells = 1;
+
+		// Считывание ввода
+		for(int i = 0, limit = 1; i < 3; i++)
+		{
+			for(int j = 0; j < limit; j++)
+				cells_сrit[i][j] = Table->Cells[i+1][j+1].ToDouble();
+			limit++;
+		}
+		// Заполнение оставшейся таблицы по введённым данным
+		Table->Cells[1][2] = FloatToStr(1.0 / cells_сrit[1][0]);
+		Table->Cells[1][3] = FloatToStr(1.0 / cells_сrit[2][0]);
+		Table->Cells[2][3] = FloatToStr(1.0 / cells_сrit[2][1]);
+
+		// Расчёты
+		scan_table(&cells_сrit[0][0]);
+		rationing(&cells_сrit[0][0]);
+		calc_relative_weights(&cells_сrit[0][0], relative_weight_crit);
+
+		// Оформление второго окна
+		count_windows = 1;
+		prev_cell_number = 0;
+		clear_cells();
+		window_setting();
+	}
+	else
+	{
+		// Расчёт относительного веса альтернатив по каждому критерию
+		if(count_windows == 1)
+		{
+            if(check_table())
+				return;
+			scan_table(&cells_CPU[0][0]);
+			for(int num_crit = 0; num_crit < 3; num_crit++)
+			{
+				for(int i = 0; i < 3; i++)
+				{
+					cells_сrit[0][i] = cells_CPU[i][num_crit] /
+					cells_CPU[0][num_crit];
+					cells_сrit[1][i] = cells_CPU[i][num_crit] /
+					cells_CPU[1][num_crit];
+					cells_сrit[2][i] = cells_CPU[i][num_crit] /
+					cells_CPU[2][num_crit];
+				}
+				rationing(&cells_сrit[0][0]);
+				calc_relative_weights(&cells_сrit[0][0], relative_weight_CPU);
+				relative_weight_CPU_crit[num_crit][0] = relative_weight_CPU[0];
+				relative_weight_CPU_crit[num_crit][1] = relative_weight_CPU[1];
+				relative_weight_CPU_crit[num_crit][2] = relative_weight_CPU[2];
+			}
+			// Расчёт результатов
+			for(int i = 0; i < 3; i++)
+			{
+				result_crit[i] = relative_weight_crit[0] *
+				relative_weight_CPU_crit[0][i] + relative_weight_crit[1] *
+				relative_weight_CPU_crit[1][i] +
+				relative_weight_crit[2] * relative_weight_CPU_crit[2][i];
+			}
+
+			// Расчёт окна вывода результатов
+			clear_cells();
+			count_windows = 2;
+			prev_cell_number = 0;
+			window_setting();
+		}
+		else
+		{   // Возврат к первому окну
+			if(count_windows == 2)
+			{
+				clear_cells();
+				count_windows = 0;
+				prev_cell_number = 0;
+				unblock_cells = 0;
+				window_setting();
+				Table->Col = 1;
+				Table->Row = 1;
+				Table->SetFocus();
+            }
+        }
+	}
+
+}
+//                        Кнопка "Очистить"
+//---------------------------------------------------------------------------
+void __fastcall TWindow::ClearClick(TObject *Sender)
+{
+	clear_cells();
+}
+//                        Кнопка "Help"
+//---------------------------------------------------------------------------
+void __fastcall TWindow::HelpClick(TObject *Sender)
+{
+	if(!help)   // Переход к окну Help
+	{
+		prev_window = count_windows;
+		count_windows = 3;
+		window_setting();
+		help = true;
+	}
+	else        // Возврат к предыдущему окну
+	{
+		count_windows = prev_window;
+		window_setting();
+		help = false;
+    }
+
+}
+//                        Подсчёт относительного веса
+//---------------------------------------------------------------------------
+void calc_relative_weights(double arr[], double * relative)
+{
+	for(int j = 0; j < 3; j++)
+		relative[j] = (arr[0 + j] + arr[3 + j] + arr[6 + j])/3;
+}
+//                        Считывание данных с таблицы
+//---------------------------------------------------------------------------
+void scan_table(double arr[])
+{
+	for(int i = 0; i < 3; i++)
+		for(int j = 0; j < 3; j++)
+			arr[i*3 + j] = Window->Table->Cells[i+1][j+1].ToDouble();
+}
+//                        Зачистка таблицы
+//---------------------------------------------------------------------------
+void clear_cells()
+{
+	if(!count_windows)
+	{
+		// Предварительное заполнение таблицы для первого окна
+		for(int crit = 1; crit < 4; crit++)
+			Window->Table->Cells[crit][crit] = "";
+		triple_hyphen();
+		Window->Table->Cells[2][1] = "";
+		Window->Table->Cells[3][1] = "";
+		Window->Table->Cells[3][2] = "";
+
+	}
+	else
+	{   // Полная зачистка таблицы для второго окна
+        for(int i = 1; i < 4; i++)
+			for(int j = 1; j < 4; j++)
+				Window->Table->Cells[i][j] = "";
+    }
+
+}
+//                        Нормирование табличных данных
+//---------------------------------------------------------------------------
+void rationing(double arr[])
+{
+	double sum[3] = {0};
+	for(int i = 0; i < 3; i++)
+	{
+		sum[i] = arr[0 + i * 3] + arr[0 + i*3 + 1] + arr[0 + i*3 + 2];
+		arr[0 + i*3] /= sum[i];
+		arr[0 + i*3 + 1] /= sum[i];
+		arr[0 + i*3 + 2] /= sum[i];
+	}
+}
+//                        Оформление окна и таблицы
+//---------------------------------------------------------------------------
+void window_setting(void)
+{
+	switch(count_windows)
+	{
+		// Ввод критериев, первое окно
+		case 0:
+		Window->Describtion->Caption = "\tВведите относительную важность "
+		"критерия 1 от-\nносительно остальных критериев, исходя из следующей "
+		"информации:\n\n\t1 - равная важность;\n\t3 - умеренное превосходство;"
+		"\n\t5 - существенное превосходство;\n\t7 - значетельное превосходство;"
+		"\n\t9 - очень большое превосходство.\n\n   Ячейки, с тройным дефисом "
+		"заполнять не следует.";
+
+		// Оформление окна "Ввод критериев"
+		decor(1, 1, 1, 1, 0, "Ввод", "Очистить", "Help");
+
+		// Предварительное заполнение таблицы
+		for(int crit = 1; crit < 4; crit++)
+		{
+			Window->Table->Cells[crit][0] = "Критерий №" + FloatToStr(crit);
+			Window->Table->Cells[0][crit] = "Критерий №" + FloatToStr(crit);
+			Window->Table->Cells[crit][crit] = "";
+		}
+		triple_hyphen();
+		break;
+
+		// Ввод данных ЦПУ, второе окно
+		case 1:
+		Window->Describtion->Caption = "\tВведите характеристики процессоров, "
+		"например:\n\n\tЦисло ядер - 6\n\tОбъём кэша (МБ) - 32\n\tЧастота (ГГц)"
+		" 3,6\n\n\tПри записи десятичной дроби\n\tиспользуйте запятую.";
+
+		// Оформление окна "Ввод данных ЦПУ"
+		decor(1, 1, 1, 1, 0, "Ввод", "Очистить", "Help");
+
+		// Оформление таблицы ввода данных ЦПУ"
+		for(int CPUNum = 1; CPUNum < 4; CPUNum++)
+			Window->Table->Cells[CPUNum][0] = "ЦПУ №" + FloatToStr(CPUNum);
+		Window->Table->Cells[0][1] = "Число ядер";
+		Window->Table->Cells[0][2] = "Объём кэша, МБ";
+		Window->Table->Cells[0][3] = "Частота, ГГц";
+		break;
+
+		// Вывод ответа, третье окно
+		case 2:
+		Window->Describtion->Caption = "\tИтоговые значения критерия для каждой"
+		" альтер-\nнативы.\n\n";
+
+		// Оформление окна "Вывод результата расчётов"
+		decor(0, 1, 0, 1, 0, "Новый расчёт", "", "Help");
+
+		for(int i = 0; i < 3; i++)
+			Window->Describtion->Caption += "\t\t\tS" + FloatToStr(i+1) + " = "
+			+ FloatToStrF(result_crit[i], ffFixed, 10, 4) + "\n";
+		Window->Input->Caption = "Новый расчёт";
+		break;
+
+		// Окно Help, четвёртое окно
+		case 3:
+		Window->Describtion->Caption = "\tДанная программа предоставляет "
+		"пользователю инструмент для решения многокритериальной задачи "
+		"\"методом анализа иерархий\". Метод разработан для при-\nнятия "
+		"решения в условиях определённости (все альтер-\nнативы известны). "
+		"Основа метода - попарные сравнения критериев по важности.";
+
+		// Оформление окна "Help"
+		decor(0, 0, 0, 1, 1, "", "", "Назад");
+		break;
+
+		default:;
+		exit(1);
+	}
+}
+//                        Оформление окна
+//---------------------------------------------------------------------------
+void decor(int visible_table, int visible_input_button, int visible_clear_button,
+int visible_help_button, int visible_image,  const char * name_button1,
+const char * name_button2, const char * name_button3)
+{
+	Window->Table->Visible = visible_table;
+	Window->Input->Visible = visible_input_button;
+	Window->Clear->Visible = visible_clear_button;
+	Window->Help->Visible = visible_help_button;
+	Window->Image->Visible = visible_image;
+	Window->Input->Caption = name_button1;
+	Window->Clear->Caption = name_button2;
+	Window->Help->Caption = name_button3;
+}
+//                        Тройной дефис в таблице
+//---------------------------------------------------------------------------
+void triple_hyphen(void)
+{
+	Window->Table->Cells[1][2] = "---";
+	Window->Table->Cells[1][3] = "---";
+	Window->Table->Cells[2][3] = "---";
+}
+//                        Проход по таблице
+//---------------------------------------------------------------------------
+int check_table(void)
+{
+	error_text = "Ошибка!\n";
+	if(count_windows == 0)
+	{
+		for(int i = 0, limit = 1; i < 3; i++)
+		{
+			for(int j = 0; j < limit; j++)
+			{
+				if(check_cells(i, j))
+					return 1;
+			}
+			limit++;
+		}
+	}
+	else
+	{
+		for(int i = 0; i < 3; i++)
+			for(int j = 0; j < 3; j++)
+			{
+				if(check_cells(i, j))
+					return 1;
+			}
+	}
+	return 0;
+}
+//                        Проверка пользовательского ввода
+//---------------------------------------------------------------------------
+int check_cells(int i, int j)
+{
+	bool space_check = true;    	// true - пробел игнорировать
+	bool first_sign = false;    	// false - не встречен первый непробельный
+									// символ
+	bool space_after_sign = false;  // false - не встречен пробельный символ
+									// после первого непробельного символа
+	bool space_error = false;       // true - присутствет пробел между символами
+	bool prev_digit = false;        // false - предыдущий символ не цифра
+	bool comma_exist = false;       // true - найдена первая запятая
+	bool many_comma_error = false;  // true - введено несколько запятых
+	bool only_nulls = true ;        // true - все символы являются нулями
+	bool not_digit_or_comma = false;// true - присутсвуют не цифра и не запятая
+
+	AnsiString input;               // Ввод в одной ячейке
+	input = Window->Table->Cells[i+1][j+1];
+
+	for(int ctr = 1; ctr <= input.Length(); ctr++)
+	{
+		//  Проверка на наличие первого пробельного символа
+		if(input[ctr] != ' ' && !first_sign)
+		{
+			first_sign = true;
+		}
+
+		//  Проверка на наличие пробельных символов после непробельных
+		if(first_sign && input[ctr] == ' ' && !space_after_sign)
+		{
+			space_after_sign = true;
+		}
+
+		//  Проверка на наличие пробельных символов между двумя непробельными
+		if(first_sign && space_after_sign && input[ctr] != ' ' && !space_error)
+		{
+            space_error = true;
+			global_error = true;
+			error_text += "Уберите лишний пробел между символами в столбце "
+			+ IntToStr(i + 2) + ", строке " + IntToStr(j + 2) + ".\n";
+		}
+
+		// Проверка наличия второй запятой
+		if(input[ctr] == ',' && comma_exist && !many_comma_error)
+		{
+			many_comma_error = true;
+			global_error = true;
+			error_text += "Притствует несколько запятых в столбце "
+			+ IntToStr(i + 2) + ", строке " + IntToStr(j + 2) + ".\n";
+		}
+
+		// Проверка наличия цифр до запятой
+		if(input[ctr] == ',' && !prev_digit && !comma_exist)
+		{
+			global_error = true;
+			error_text += "Перед запятой нету цифры в столбце "
+			+ IntToStr(i + 2) + ", строке " + IntToStr(j + 2) + ".\n";
+		}
+
+		// Если символ не цифра и не запятая
+		if(!isdigit(input[ctr]) && input[ctr] != ',' && input[ctr] != ' '
+		&& !not_digit_or_comma)
+		{
+			not_digit_or_comma = true;
+			global_error = true;
+			error_text += "Введены нециферные символы в столбце "
+			+ IntToStr(i + 2) + ", строке " + IntToStr(j + 2) + ".\n";
+		}
+
+		// Проверка наличия в вводе исключительно нулей
+		if(input[ctr] != ' ' && input[ctr] != '0' && input[ctr] != ',')
+		{
+			only_nulls = false;
+		}
+
+		// Проверка на наличие первого символа-цифры
+		if(isdigit(input[ctr]))
+		{
+			prev_digit = true;
+		}
+
+		// Проверка наличия второй запятой
+		if(input[ctr] == ',' && !comma_exist)
+		{
+			comma_exist = true;
+		}
+	}
+
+	//  Встречены только пробельные символы
+	if(!first_sign)
+	{
+		global_error = true;
+		error_text += "Ячейка пуста в столбце "
+		+ IntToStr(i + 2) + ", строке " + IntToStr(j + 2) + ".\n";
+	}
+	else
+	{   // Ввод равен нулю
+		if(only_nulls)
+		{
+			global_error = true;
+			error_text += "Число не должно равняться нулю в столбце "
+			+ IntToStr(i + 2) + ", строке " + IntToStr(j + 2) + ".\n";
+        }
+    }
+
+	// Вывод сообшения об ошибки после проверки последней ячейки
+	if(i == 2 && j == 2 && global_error)
+	{
+		ShowMessage(error_text);
+		error_text.Delete(1, error_text.Length());
+		global_error = 0;
+		return 1;
+	}
+	return 0;
+}
+//                        Блокировка ячеек с дефисами первого окна
+//---------------------------------------------------------------------------
+void __fastcall TWindow::TableSelectCell(TObject *Sender, int ACol, int ARow,
+bool &CanSelect)
+{
+	if(!unblock_cells)
+	{
+		if((ACol == 1 && ARow == 2) || (ACol == 1 && ARow == 3) ||
+		(ACol == 2 && ARow == 3))
+			CanSelect = false;
+	}
+	else
+	{
+		if((ACol == 1 && ARow == 2) || (ACol == 1 && ARow == 3) ||
+		(ACol == 2 && ARow == 3))
+			CanSelect = true;
+	}
+}
+//---------------------------------------------------------------------------
+
+void __fastcall TWindow::TableKeyPress(TObject *Sender, System::WideChar &Key)
+{
+	WideChar comma = ',';
+
+	//*
+
+	// Разрешения backspace
+	if(Key == '\b' && prev_char[prev_char.Length()] == comma)
+	{
+		cells_comme[Table->Col][Table->Row] = false;
+	}
+	else
+	{
+		if(Key == '\b')
+			return;
+    }
+
+	// Сброс флагов при смене ячейки
+	if(prev_cell_number != Table->Col * 10 + Table->Row)
+	{
+		first_digit = false;
+		cells_comme[Table->Col][Table->Row] = false;
+		prev_char.Delete(1, prev_char.Length());
+	}
+
+	// Запрет ввода запятой до ввода цифры
+	if(!first_digit && Key == comma)
+	{
+		Key = NULL;
+	}
+
+	// Запрет ввода второй запятой
+	if(first_comma && Key == comma)
+	{
+		Key = NULL;
+	}
+
+	// Запрет ввода не цифры и не запятой
+	if(!isdigit(Key) && Key != comma)
+	{
+		Key = NULL;
+	}
+
+	// Ввод первой запятой
+	if(first_digit && Key == comma && !first_comma)
+	{
+		first_comma = true;
+	}
+
+	// Ввод первой цифры
+	if(isdigit(Key) && !first_digit)
+	{
+		first_digit = true;
+	}
+
+	// Запоминание предыдущей ячейки
+	prev_cell_number = Table->Col * 10 + Table->Row;
+
+	// Запоминание предыдущего символа
+	if(Key != '\b' && Key != NULL)
+	{
+		prev_char += Key;
+    }
+}
+//---------------------------------------------------------------------------
+
